@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 import time
 import re
+import math
 
 class FFmpegHandler:
     def __init__(self):
@@ -94,64 +95,74 @@ class FFmpegHandler:
 
     def generate_drawtext_filter(self, caption, preset, preset_manager=None):
         """Generate FFmpeg drawtext filter for a caption"""
-        # Escape the caption text
-        text = self.escape_ffmpeg_text(caption['text'])
-        
-        # Get preset values with defaults
-        font = preset.get('font', 'Arial')
-        size = preset.get('size', 24)
-        color = preset.get('color', 'white')
-        x_pos = preset.get('x', '(w-text_w)/2')
-        y_pos = preset.get('y', 'h-100')
-        
-        # Handle custom fonts if a preset manager is provided
-        font_path = None
-        if preset_manager and preset_manager.is_custom_font(font):
-            font_path = preset_manager.get_custom_font_path(font)
-            # Ensure path is valid and properly escaped
-            if font_path:
-                # Convert path to raw string and normalize slashes
-                font_path = font_path.replace('\\', '/')
-        
-        # Calculate timing
-        start_time = caption['start']
-        end_time = caption['end']
-        
-        # Generate alpha expression for fade in/out
-        alpha_expr = f"if(lt(t,{start_time+0.5}),(t-{start_time})/0.5,if(lt(t,{end_time-0.5}),1,if(lt(t,{end_time}),1-(t-{end_time-0.5})/0.5,0)))"
-        
-        # Build the drawtext filter
-        filter_parts = [
-            f"drawtext=text='{text}'"
-        ]
-        
-        # Use font file path for custom fonts
-        if font_path:
-            # Properly escape the font path
-            font_path = self.escape_ffmpeg_text(font_path)
-            filter_parts.append(f"fontfile='{font_path}'")
-        else:
-            filter_parts.append(f"font='{font}'")
+        try:
+            # Escape the caption text
+            text = self.escape_ffmpeg_text(caption['text'])
             
-        filter_parts.extend([
-            f"fontsize={size}",
-            f"fontcolor={color}",
-            f"x={x_pos}",
-            f"y={y_pos}",
-            "box=1:boxcolor=black@0.5:boxborderw=5",
-            f"alpha='{alpha_expr}'"
-        ])
-        
-        filter_string = ':'.join(filter_parts)
-        
-        # Validate the filter
-        is_valid, error = self.check_filter_valid(filter_string)
-        if not is_valid:
-            # Try simplified version if validation fails
-            print(f"Warning: Filter validation failed: {error}")
-            return self.create_fallback_filter(text, font, size, color, x_pos, y_pos)
-        
-        return filter_string
+            # Get preset values with defaults
+            font = preset.get('font', 'Arial')
+            size = preset.get('size', 24)
+            color = preset.get('color', 'white')
+            x_pos = preset.get('x', '(w-text_w)/2')
+            y_pos = preset.get('y', 'h-100')
+            
+            # Handle custom fonts if a preset manager is provided
+            font_path = None
+            if preset_manager and preset_manager.is_custom_font(font):
+                font_path = preset_manager.get_custom_font_path(font)
+                # Ensure path is valid and properly escaped
+                if font_path and os.path.exists(font_path):
+                    # Convert Windows backslashes to forward slashes
+                    font_path = font_path.replace('\\', '/')
+                else:
+                    print(f"Warning: Font file not found: {font_path}")
+                    # Use system font instead
+                    font_path = None
+            
+            # Calculate timing
+            start_time = caption.get('start', 0)
+            end_time = caption.get('end', start_time + 5)
+            
+            # Generate alpha expression for fade in/out
+            fade_duration = min(0.5, (end_time - start_time) / 4)  # Adjust fade duration for short captions
+            alpha_expr = f"if(lt(t,{start_time+fade_duration}),(t-{start_time})/{fade_duration},if(lt(t,{end_time-fade_duration}),1,if(lt(t,{end_time}),1-(t-{end_time-fade_duration})/{fade_duration},0)))"
+            
+            # Build the drawtext filter
+            filter_parts = [
+                f"drawtext=text='{text}'"
+            ]
+            
+            # Use font file path for custom fonts
+            if font_path:
+                # Properly escape the font path for FFmpeg
+                font_path = self.escape_ffmpeg_text(font_path)
+                filter_parts.append(f"fontfile='{font_path}'")
+            else:
+                filter_parts.append(f"font='{font}'")
+                
+            filter_parts.extend([
+                f"fontsize={size}",
+                f"fontcolor={color}",
+                f"x={x_pos}",
+                f"y={y_pos}",
+                "box=1:boxcolor=black@0.5:boxborderw=5",
+                f"alpha='{alpha_expr}'"
+            ])
+            
+            filter_string = ':'.join(filter_parts)
+            
+            # Validate the filter
+            is_valid, error = self.check_filter_valid(filter_string)
+            if not is_valid:
+                # Try simplified version if validation fails
+                print(f"Warning: Filter validation failed: {error}")
+                return self.create_fallback_filter(text, font, size, color, x_pos, y_pos)
+            
+            return filter_string
+        except Exception as e:
+            print(f"Error generating drawtext filter: {e}")
+            # Return a very simple filter as fallback
+            return f"drawtext=text='{self.escape_ffmpeg_text(caption.get('text', ''))}':font='Arial':fontsize=24:fontcolor=white:x=(w-text_w)/2:y=h-80"
         
     def create_fallback_filter(self, text, font, size, color, x_pos, y_pos):
         """Create a simplified fallback filter if the main one fails"""
@@ -202,28 +213,100 @@ class FFmpegHandler:
     def render_final_video(self, input_path, captions, presets, output_path, progress_callback=None, aspect_ratio=None, scale_mode='contain', preset_manager=None):
         """Render the final video with captions"""
         try:
+            # Validate input file exists
+            if not os.path.exists(input_path):
+                raise FileNotFoundError(f"Input video file not found: {input_path}")
+                
+            # Ensure output directory exists
+            output_dir = os.path.dirname(output_path)
+            if not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+                
             # Build filter chain
             filter_parts = []
             current_input = "0:v"  # Start with the video input
             
             # Add scale filter if aspect ratio is specified
             if aspect_ratio:
+                # Get the original video dimensions
+                video_info = self.get_video_info(input_path)
+                orig_width = video_info["width"]
+                orig_height = video_info["height"]
+                
+                if not orig_width or not orig_height:
+                    raise Exception("Could not determine video dimensions")
+                
+                # Parse the target aspect ratio
+                if ":" in aspect_ratio:
+                    ar_width, ar_height = map(int, aspect_ratio.split(":"))
+                    target_ratio = ar_width / ar_height
+                else:
+                    # Default to original aspect ratio if format is invalid
+                    target_ratio = orig_width / orig_height
+                
+                # Calculate target dimensions while maintaining resolution
+                orig_pixels = orig_width * orig_height
+                orig_ratio = orig_width / orig_height
+                
+                if target_ratio > orig_ratio:
+                    # Target is wider than original
+                    target_height = int(min(orig_height, math.sqrt(orig_pixels / target_ratio)))
+                    target_width = int(target_height * target_ratio)
+                else:
+                    # Target is taller than original
+                    target_width = int(min(orig_width, math.sqrt(orig_pixels * target_ratio)))
+                    target_height = int(target_width / target_ratio)
+                
+                # Ensure even dimensions (required by most codecs)
+                target_width = target_width + (target_width % 2)
+                target_height = target_height + (target_height % 2)
+                
+                # Ensure minimum dimensions (at least 320x180)
+                target_width = max(320, target_width)
+                target_height = max(180, target_height)
+                
+                dimensions = f"{target_width}:{target_height}"
+                
+                if progress_callback:
+                    progress_callback(-1, f"Converting aspect ratio to {aspect_ratio}, dimensions: {dimensions}")
+                
                 if scale_mode == 'contain':
-                    filter_parts.append(f"[{current_input}]scale={aspect_ratio}:force_original_aspect_ratio=decrease,pad={aspect_ratio}:(ow-ih)/2:(oh-iw)/2:black[v0]")
+                    filter_parts.append(f"[{current_input}]scale={dimensions}:force_original_aspect_ratio=decrease,pad={dimensions}:(ow-iw)/2:(oh-ih)/2:black[v0]")
                 else:  # cover
-                    filter_parts.append(f"[{current_input}]scale={aspect_ratio}:force_original_aspect_ratio=increase,crop={aspect_ratio}[v0]")
+                    filter_parts.append(f"[{current_input}]scale={dimensions}:force_original_aspect_ratio=increase,crop={dimensions}[v0]")
                 current_input = "v0"
             
-            # Add drawtext filters for each caption
-            for i, caption in enumerate(captions):
-                preset = presets.get(caption['preset'], {})
-                drawtext_filter = self.generate_drawtext_filter(caption, preset, preset_manager)
-                output_label = f"v{i+1}"
-                filter_parts.append(f"[{current_input}]{drawtext_filter}[{output_label}]")
-                current_input = output_label
+            # Validate captions
+            if not captions or len(captions) == 0:
+                if progress_callback:
+                    progress_callback(-1, "Warning: No captions to render. Output will be identical to input.")
+                # Just use a simple filter to copy the video
+                filter_parts.append(f"[{current_input}]null[vout]")
+                current_input = "vout"
+            else:
+                # Add drawtext filters for each caption
+                for i, caption in enumerate(captions):
+                    preset_name = caption.get('preset', 'default')
+                    preset = presets.get(preset_name, {})
+                    
+                    if not preset:
+                        if progress_callback:
+                            progress_callback(-1, f"Warning: Preset '{preset_name}' not found, using defaults")
+                    
+                    try:
+                        drawtext_filter = self.generate_drawtext_filter(caption, preset, preset_manager)
+                        output_label = f"v{i+1}"
+                        filter_parts.append(f"[{current_input}]{drawtext_filter}[{output_label}]")
+                        current_input = output_label
+                    except Exception as e:
+                        if progress_callback:
+                            progress_callback(-1, f"Warning: Error with caption {i+1}, skipping: {str(e)}")
             
             # Combine all filters
             filter_complex = ';'.join(filter_parts)
+            
+            # Check if audio stream exists
+            has_audio = self.check_has_audio(input_path)
             
             # Build FFmpeg command
             command = [
@@ -231,8 +314,14 @@ class FFmpegHandler:
                 '-i', input_path,
                 '-filter_complex', filter_complex,
                 '-map', f'[{current_input}]',  # Use the last output label
-                '-map', '0:a',
             ]
+            
+            # Add audio mapping if present
+            if has_audio:
+                command.extend(['-map', '0:a'])
+            else:
+                if progress_callback:
+                    progress_callback(-1, "Note: No audio stream detected in input file.")
             
             # Use appropriate encoder based on availability
             if self.check_encoder_available('h264_nvenc'):
@@ -243,19 +332,23 @@ class FFmpegHandler:
                 ])
             else:
                 # Fallback to libx264 if NVENC not available
+                if progress_callback:
+                    progress_callback(-1, "NVENC not available, using libx264 encoder")
                 command.extend([
                     '-c:v', 'libx264',
                     '-preset', 'medium',
                     '-crf', '23',
                 ])
                 
-            # Add audio codec and output file
-            command.extend([
-                '-c:a', 'aac',
-                '-b:a', '192k',
-                '-y',
-                output_path
-            ])
+            # Add audio codec if needed
+            if has_audio:
+                command.extend([
+                    '-c:a', 'aac',
+                    '-b:a', '192k',
+                ])
+            
+            # Add output file
+            command.extend(['-y', output_path])
             
             # Print the command for debugging
             command_str = ' '.join(command)
@@ -297,6 +390,12 @@ class FFmpegHandler:
                 error_output = '\n'.join(stderr_output)
                 raise Exception(f"FFmpeg error: {error_output}")
             
+            # Verify output file exists and has non-zero size
+            if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+                raise Exception("Render completed, but output file is missing or empty")
+                
+            return output_path
+                
         except Exception as e:
             error_msg = str(e)
             print(f"Render error: {error_msg}")
@@ -306,6 +405,14 @@ class FFmpegHandler:
                 raise Exception("Font file not found. Please ensure custom fonts are properly installed.")
             elif "Error initializing filter" in error_msg and "drawtext" in error_msg:
                 raise Exception("Error in drawtext filter. There may be special characters or font issues. Try a different font or text.")
+            elif "Invalid frame size" in error_msg or "dimensions" in error_msg.lower():
+                raise Exception("Invalid video dimensions. Please try a different aspect ratio or let FFmpeg determine the size automatically.")
+            elif "less than the minimum" in error_msg:
+                raise Exception("Video dimensions are too small. Ensure the output size is at least 320x180 pixels.")
+            elif "Cannot find a matching stream" in error_msg:
+                raise Exception("Cannot find appropriate streams in the input file. The video file may be corrupted.")
+            elif "No such file or directory" in error_msg:
+                raise Exception(f"File not found: {error_msg}")
             else:
                 raise Exception(f"Error rendering video: {error_msg}")
         
@@ -391,11 +498,25 @@ class FFmpegHandler:
             
     def sanitize_filter(self, filter_text):
         """Attempt to sanitize a filter string to make it valid"""
-        # Common issues to fix:
-        # 1. Replace fontfile with font
-        filter_text = filter_text.replace("fontfile=", "font=")
+        print(f"Trying to sanitize filter: {filter_text}")
         
-        # 2. Make sure font names have quotes
+        # Check for font path issues
+        if "fontfile=" in filter_text:
+            # Try removing the font file and using a system font instead
+            if "fontfile='" in filter_text:
+                parts = filter_text.split("fontfile='")
+                if len(parts) > 1:
+                    remaining = parts[1].split("':", 1)
+                    if len(remaining) > 1:
+                        filter_text = parts[0] + "font='Arial':" + remaining[1]
+                    else:
+                        filter_text = parts[0] + "font='Arial'"
+            
+            # If we still have fontfile, just replace it with Arial
+            if "fontfile=" in filter_text:
+                filter_text = re.sub(r"fontfile=[^:]+", "font='Arial'", filter_text)
+        
+        # Make sure font names have quotes
         if "font=" in filter_text and not "font='" in filter_text:
             filter_text = filter_text.replace("font=", "font='")
             # Add closing quote if needed
@@ -406,6 +527,18 @@ class FFmpegHandler:
                     if len(subparts) > 1:
                         filter_text = parts[0] + "font='" + subparts[0] + "':" + ":".join(subparts[1:])
         
+        # Check for text issues
+        if "text='" in filter_text:
+            # Ensure text has proper closing quote
+            parts = filter_text.split("text='")
+            if len(parts) > 1:
+                text_part = parts[1]
+                quote_idx = text_part.find("':")
+                if quote_idx == -1:
+                    # Add closing quote
+                    filter_text = filter_text + "'"
+        
+        print(f"Sanitized filter: {filter_text}")
         return filter_text
     
     def check_has_audio(self, video_path):

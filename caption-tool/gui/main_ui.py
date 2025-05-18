@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (QMainWindow, QApplication, QWidget, QVBoxLayout,   
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QPixmap, QImage, QColor, QPalette, QFont, QTextCharFormat, QTextCursor
 import torch
+import subprocess
 
 # Import our custom utils
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -123,6 +124,9 @@ class MainWindow(QMainWindow):
         self.preset_manager = PresetManager()
         self.transcriber = WhisperTranscriber(model_size="small")
         
+        # Connect audio player signal explicitly
+        self.audio_player.playback_finished.connect(self.on_playback_finished)
+        
         # Initialize app state
         self.current_video_path = None
         self.current_audio_path = None
@@ -132,6 +136,11 @@ class MainWindow(QMainWindow):
         self.captions = []
         self.captions_file = None
         self.auto_transcribe_next = False
+        self.is_segment_playing = False  # Track playback state
+        
+        # Initialize navigation timer
+        self.navigation_timer = QTimer()
+        self.navigation_timer.setSingleShot(True)
         
         # Set default captions file path
         base_dir = Path(__file__).parent.parent
@@ -682,19 +691,39 @@ class MainWindow(QMainWindow):
         has_caption = len(self.caption_text.toPlainText()) > 0
         has_captions = len(self.captions) > 0
         
-        self.play_segment_btn.setEnabled(has_video)
-        self.prev_segment_btn.setEnabled(has_video and self.current_time > 0)
-        self.next_segment_btn.setEnabled(has_video and self.current_time + self.segment_duration < self.video_duration)
+        # Double-check if audio is actually playing (belt and suspenders approach)
+        currently_playing = getattr(self, 'is_segment_playing', False)
+        if currently_playing and hasattr(self.audio_player, 'is_playing'):
+            # Override our state if the player says it's not playing
+            if not self.audio_player.is_playing():
+                self.is_segment_playing = False
+                currently_playing = False
+        
+        # Handle navigation buttons based on playback status
+        if currently_playing:
+            # Disable navigation during playback
+            self.prev_segment_btn.setEnabled(False)
+            self.next_segment_btn.setEnabled(False)
+            self.play_segment_btn.setEnabled(False)
+        else:
+            # Normal state when not playing
+            self.play_segment_btn.setEnabled(has_video)
+            self.prev_segment_btn.setEnabled(has_video and self.current_time > 0)
+            self.next_segment_btn.setEnabled(has_video and self.current_time + self.segment_duration < self.video_duration)
         
         # Model needs to be checked separately since it might not be downloaded
         current_model = self.model_combo.currentData()
         self.transcriber.model_size = current_model
         model_exists = self.transcriber.check_model()
-        self.auto_transcribe_btn.setEnabled(has_video and model_exists)
+        self.auto_transcribe_btn.setEnabled(has_video and model_exists and not currently_playing)
         
-        self.save_caption_btn.setEnabled(has_video and has_caption)
-        self.preview_caption_btn.setEnabled(has_video and has_caption)
+        # Disable caption editing during playback
+        caption_edit_enabled = has_video and not currently_playing
+        self.save_caption_btn.setEnabled(caption_edit_enabled and has_caption)
+        self.preview_caption_btn.setEnabled(caption_edit_enabled and has_caption)
+        self.caption_text.setEnabled(caption_edit_enabled)
         
+        # Always enable these buttons
         self.render_btn.setEnabled(has_video and has_captions)
         self.save_captions_btn.setEnabled(has_captions)
         
@@ -818,19 +847,42 @@ class MainWindow(QMainWindow):
             return
             
         try:
+            self.is_segment_playing = True
             self.audio_player.play_segment(self.current_time, self.segment_duration)
+            self.update_ui_state()
         except Exception as e:
+            self.is_segment_playing = False
             QMessageBox.warning(self, "Playback Error", str(e))
             
     def on_prev_segment(self):
         """Go to previous segment"""
+        # Don't allow navigation while a segment is playing
+        if getattr(self, 'is_segment_playing', False):
+            return
+            
+        # Don't allow navigation if the timer is active
+        if hasattr(self, 'navigation_timer') and self.navigation_timer.isActive():
+            return
+            
         if self.current_time > 0:
             self.current_time = max(0, self.current_time - self.segment_duration)
             self.update_preview()
             self.update_ui_state()
             
+            # Start the cooldown timer to prevent rapid clicking
+            if hasattr(self, 'navigation_timer'):
+                self.navigation_timer.start(1000)  # 1 second cooldown
+            
     def on_next_segment(self):
         """Go to next segment and save the current caption if any"""
+        # Don't allow navigation while a segment is playing
+        if getattr(self, 'is_segment_playing', False):
+            return
+            
+        # Don't allow navigation if the timer is active
+        if hasattr(self, 'navigation_timer') and self.navigation_timer.isActive():
+            return
+            
         # Save current caption if there's text
         text = self.caption_text.toPlainText().strip()
         if text and self.current_video_path:
@@ -877,12 +929,16 @@ class MainWindow(QMainWindow):
             
             # Auto-play the next segment
             if self.current_audio_path:
-                self.audio_player.play_segment(self.current_time, self.segment_duration)
+                self.on_play_segment()
                 
                 # Auto-transcribe if enabled
                 if self.auto_transcribe_next:
                     QTimer.singleShot(500, self.on_auto_transcribe)
-                
+            
+            # Start the cooldown timer to prevent rapid clicking
+            if hasattr(self, 'navigation_timer'):
+                self.navigation_timer.start(1000)  # 1 second cooldown
+            
     def keyPressEvent(self, event):
         """Handle global keyboard shortcuts"""
         # Spacebar to go to next segment
@@ -1002,6 +1058,23 @@ class MainWindow(QMainWindow):
             self.update_preview()
             self.save_captions()
             
+    def on_playback_finished(self):
+        """Handle when audio playback finished"""
+        print("Playback finished - unlocking UI")
+        self.is_segment_playing = False
+        self.update_ui_state()
+            
+    def open_folder_in_explorer(self, path):
+        """Open a folder in Windows Explorer"""
+        try:
+            folder_path = os.path.dirname(path) if os.path.isfile(path) else path
+            if os.path.exists(folder_path):
+                subprocess.Popen(['explorer', folder_path])
+            else:
+                print(f"Warning: Folder path does not exist: {folder_path}")
+        except Exception as e:
+            print(f"Error opening folder: {e}")
+            
     def on_edit_presets(self):
         """Open the preset editor dialog"""
         dialog = PresetEditorDialog(self.preset_manager, self)
@@ -1081,10 +1154,32 @@ class MainWindow(QMainWindow):
             
             progress_dialog.close()
             
-            QMessageBox.information(
-                self, "Success", 
-                f"Video rendered successfully to:\n{output_path}"
-            )
+            # Create success dialog with open folder button
+            success_dialog = QDialog(self)
+            success_dialog.setWindowTitle("Render Complete")
+            success_dialog.setMinimumWidth(400)
+            
+            dialog_layout = QVBoxLayout(success_dialog)
+            
+            success_label = QLabel(f"Video rendered successfully to:\n{output_path}")
+            success_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            success_label.setWordWrap(True)
+            dialog_layout.addWidget(success_label)
+            
+            button_layout = QHBoxLayout()
+            
+            open_folder_btn = QPushButton("📂 Open Folder")
+            open_folder_btn.clicked.connect(lambda: self.open_folder_in_explorer(output_path))
+            
+            ok_btn = QPushButton("✓ OK")
+            ok_btn.clicked.connect(success_dialog.accept)
+            
+            button_layout.addWidget(open_folder_btn)
+            button_layout.addWidget(ok_btn)
+            
+            dialog_layout.addLayout(button_layout)
+            
+            success_dialog.exec()
             
         except Exception as e:
             QMessageBox.critical(self, "Render Error", str(e))

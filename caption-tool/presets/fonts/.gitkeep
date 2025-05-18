@@ -1,1 +1,2 @@
- 
+# This file ensures that the empty fonts directory is preserved in Git.
+# Custom TTF fonts placed in this directory will be available for captions. 

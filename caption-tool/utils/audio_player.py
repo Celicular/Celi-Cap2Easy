@@ -4,14 +4,24 @@ import subprocess
 import wave
 import pygame
 from pygame import mixer
+import threading
+import time
+from PyQt6.QtCore import QObject, pyqtSignal
 
-class AudioPlayer:
+class AudioPlayer(QObject):
+    # Define signals
+    playback_finished = pyqtSignal()
+    
     def __init__(self):
+        super().__init__()
+        
         # Initialize pygame mixer
         pygame.init()
         mixer.init()
         self.current_audio_file = None
         self.temp_files = []
+        self.playback_monitor_thread = None
+        self.should_monitor = False
         
     def __del__(self):
         """Clean up temporary files when object is destroyed"""
@@ -19,6 +29,12 @@ class AudioPlayer:
         
     def cleanup(self):
         """Remove all temporary files"""
+        self.should_monitor = False
+        
+        # Wait for monitor thread to end if it exists
+        if self.playback_monitor_thread and self.playback_monitor_thread.is_alive():
+            self.playback_monitor_thread.join(1.0)
+        
         for file in self.temp_files:
             try:
                 if os.path.exists(file):
@@ -56,10 +72,22 @@ class AudioPlayer:
         
         return temp_file
     
+    def monitor_playback(self):
+        """Monitor the playback status and emit a signal when finished"""
+        self.should_monitor = True
+        while self.should_monitor and mixer.music.get_busy():
+            time.sleep(0.1)
+            
+        # Only emit if we didn't manually stop monitoring
+        if self.should_monitor:
+            self.playback_finished.emit()
+        
+        self.should_monitor = False
+    
     def play_segment(self, start_time, duration=5.0):
         """Play a 5-second segment of audio starting at start_time"""
-        # Stop any currently playing audio
-        mixer.music.stop()
+        # Stop any currently playing audio and monitoring
+        self.stop()
         
         # Extract the segment
         segment_file = self.extract_segment(start_time, duration)
@@ -67,6 +95,11 @@ class AudioPlayer:
         # Load and play the segment
         mixer.music.load(segment_file)
         mixer.music.play()
+        
+        # Start monitoring thread
+        self.playback_monitor_thread = threading.Thread(target=self.monitor_playback)
+        self.playback_monitor_thread.daemon = True
+        self.playback_monitor_thread.start()
         
         return segment_file
     
@@ -104,4 +137,5 @@ class AudioPlayer:
     
     def stop(self):
         """Stop playback"""
+        self.should_monitor = False
         mixer.music.stop() 
