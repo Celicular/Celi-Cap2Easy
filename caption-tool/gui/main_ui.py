@@ -113,19 +113,26 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
+        # App version
+        self.app_version = "1.0.0"
+        
         # Check for forced GPU mode from previous run
         force_gpu = os.environ.get("FORCE_GPU", "").lower() in ("1", "true", "yes")
         if force_gpu:
-            print("Starting with forced GPU mode...")
+            # Production mode - no debug prints
+            pass
         
         # Initialize utilities
-        self.ffmpeg = FFmpegHandler()
-        self.audio_player = AudioPlayer()
-        self.preset_manager = PresetManager()
-        self.transcriber = WhisperTranscriber(model_size="small")
-        
-        # Connect audio player signal explicitly
-        self.audio_player.playback_finished.connect(self.on_playback_finished)
+        try:
+            self.ffmpeg = FFmpegHandler()
+            self.audio_player = AudioPlayer()
+            self.preset_manager = PresetManager()
+            self.transcriber = WhisperTranscriber(model_size="small")
+            
+            # Connect audio player signal explicitly
+            self.audio_player.playback_finished.connect(self.on_playback_finished)
+        except Exception as e:
+            self.show_critical_error(f"Failed to initialize components: {e}")
         
         # Initialize app state
         self.current_video_path = None
@@ -146,6 +153,12 @@ class MainWindow(QMainWindow):
         base_dir = Path(__file__).parent.parent
         self.captions_file = base_dir / "data" / "captions.json"
         
+        # Ensure data directory exists
+        try:
+            os.makedirs(os.path.dirname(self.captions_file), exist_ok=True)
+        except Exception as e:
+            self.show_critical_error(f"Failed to create data directory: {e}")
+        
         # Reset captions file on startup
         self.reset_captions_file()
         
@@ -154,6 +167,12 @@ class MainWindow(QMainWindow):
         
         # Load captions if exist
         self.load_captions()
+        
+    def show_critical_error(self, message):
+        """Show critical error and exit if necessary"""
+        QMessageBox.critical(self, "Critical Error", message)
+        # For truly fatal errors, we might want to exit
+        # sys.exit(1)
         
     def init_ui(self):
         """Initialize the user interface"""
@@ -1060,7 +1079,7 @@ class MainWindow(QMainWindow):
             
     def on_playback_finished(self):
         """Handle when audio playback finished"""
-        print("Playback finished - unlocking UI")
+        # Production mode - no debug prints
         self.is_segment_playing = False
         self.update_ui_state()
             
@@ -1071,9 +1090,10 @@ class MainWindow(QMainWindow):
             if os.path.exists(folder_path):
                 subprocess.Popen(['explorer', folder_path])
             else:
-                print(f"Warning: Folder path does not exist: {folder_path}")
+                # In production, show a user-friendly message instead of console warning
+                QMessageBox.warning(self, "Warning", f"The folder does not exist:\n{folder_path}")
         except Exception as e:
-            print(f"Error opening folder: {e}")
+            QMessageBox.warning(self, "Error", f"Could not open folder: {e}")
             
     def on_edit_presets(self):
         """Open the preset editor dialog"""
