@@ -1,0 +1,57 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+ENV/
+.env
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project-specific files
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.mkv
+temp/
+tmp/
+
+# Local data files
+caption-tool/data/captions.json
+
+# Custom fonts (keep the directory structure but ignore font files)
+caption-tool/presets/fonts/*.ttf
+caption-tool/presets/fonts/*.otf
+caption-tool/presets/fonts/*.woff
+caption-tool/presets/fonts/*.woff2
+
+# Keep the fonts directory
+!caption-tool/presets/fonts/.gitkeep
+
+# Keep custom presets
+!caption-tool/presets/presets.json 

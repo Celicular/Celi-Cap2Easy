@@ -14,6 +14,7 @@ import sys
 import os
 from pathlib import Path
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from gui.main_ui import MainWindow
 
 # Add the project directory to the Python path
 project_dir = Path(__file__).parent
@@ -22,7 +23,6 @@ if str(project_dir) not in sys.path:
 
 # Import application modules
 try:
-    from gui.main_ui import MainWindow
     from utils.ffmpeg import FFmpegHandler
 except ImportError as e:
     print(f"Error importing modules: {e}")
@@ -69,24 +69,10 @@ def create_required_directories():
         os.makedirs(dir_path, exist_ok=True)
 
 def main():
-    """Main application entry point"""
-    # Create required directories
-    create_required_directories()
-    
-    # Check dependencies
-    if not check_requirements():
-        sys.exit(1)
-    
-    # Create application
+    """Main entry point for the application"""
     app = QApplication(sys.argv)
-    app.setApplicationName("Video Captioning Tool")
-    app.setOrganizationName("Caption Tool")
-    
-    # Create and show main window
     window = MainWindow()
     window.show()
-    
-    # Run application event loop
     sys.exit(app.exec())
 
 if __name__ == "__main__":

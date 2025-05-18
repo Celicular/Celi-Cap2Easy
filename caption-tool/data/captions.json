@@ -1,44 +1,26 @@
 [
   {
+    "start": 0.0,
+    "end": 5.0,
+    "text": "EGQG33G2G2",
+    "preset": "fadeBottom",
+    "language": "English",
+    "auto_generated": false
+  },
+  {
     "start": 5.0,
     "end": 10.0,
-    "text": "Haule se, Dheeme Se",
-    "preset": "fadeBottom"
+    "text": "2G32G32 23 G23G 32G 2",
+    "preset": "fadeBottom",
+    "language": "English",
+    "auto_generated": false
   },
   {
     "start": 10.0,
     "end": 15.0,
-    "text": "Mujhko Baahon mein bhar lo na tum",
-    "preset": "fadeBottom"
-  },
-  {
-    "start": 15.0,
-    "end": 20.0,
-    "text": "Narma Si, Saason Mein",
-    "preset": "fadeBottom"
-  },
-  {
-    "start": 20.0,
-    "end": 25.0,
-    "text": "Mujhko aahon mein bharlo",
-    "preset": "fadeBottom"
-  },
-  {
-    "start": 25.0,
-    "end": 30.0,
-    "text": "Na tum, I",
-    "preset": "fadeBottom"
-  },
-  {
-    "start": 30.0,
-    "end": 35.0,
-    "text": "Just need time, Ab tere Bina",
-    "preset": "fadeBottom"
-  },
-  {
-    "start": 35.0,
-    "end": 40.0,
-    "text": "Yaahan meri saansein, Jaise bine nindiyaan ki raatein",
-    "preset": "fadeBottom"
+    "text": "32G 3G32G 32G 32G 2G23",
+    "preset": "better",
+    "language": "English",
+    "auto_generated": false
   }
 ]

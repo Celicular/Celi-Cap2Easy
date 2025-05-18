@@ -16,11 +16,41 @@
     "y": "50"
   },
   "centerBold": {
-    "font": "Arial Black",
+    "font": "Arial",
     "size": 42,
     "color": "#ffffff",
     "animation": "appear",
     "x": "(w-text_w)/2",
     "y": "(h-text_h)/2"
+  },
+  "subtitleStyle": {
+    "font": "Arial",
+    "size": 28,
+    "color": "white",
+    "animation": "appear",
+    "x": "(w-text_w)/2",
+    "y": "h-80",
+    "outline": true,
+    "outline_size": 2,
+    "outline_color": "black",
+    "background": true,
+    "bg_color": "#000000",
+    "bg_opacity": 50
+  },
+  "aa": {
+    "font": "Courier New",
+    "size": 36,
+    "color": "#91aa5b",
+    "animation": "appear",
+    "x": "(w-text_w)/2",
+    "y": "h-100"
+  },
+  "better": {
+    "font": "Poppins-Medium",
+    "size": 36,
+    "color": "white",
+    "animation": "appear",
+    "x": "(w-text_w)/2",
+    "y": "h-100"
   }
-} 
+}

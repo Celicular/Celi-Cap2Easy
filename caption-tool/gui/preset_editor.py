@@ -1,8 +1,11 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                             QPushButton, QListWidget, QComboBox, QSpinBox, QGroupBox,
-                            QColorDialog, QMessageBox, QFormLayout, QTabWidget, QWidget)
+                            QColorDialog, QMessageBox, QFormLayout, QTabWidget, QWidget,
+                            QFileDialog)
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor, QFont
+import os
+from pathlib import Path
 
 class PresetEditorDialog(QDialog):
     """Dialog for creating, editing, and deleting style presets"""
@@ -13,12 +16,13 @@ class PresetEditorDialog(QDialog):
         
         self.init_ui()
         self.load_presets()
+        self.load_fonts()
         
     def init_ui(self):
         """Initialize the UI layout"""
         self.setWindowTitle("Caption Style Presets")
-        self.setMinimumWidth(600)
-        self.setMinimumHeight(500)
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(600)
         
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -62,13 +66,22 @@ class PresetEditorDialog(QDialog):
         self.preset_id_edit = QLineEdit()
         form_layout.addRow("Preset ID:", self.preset_id_edit)
         
-        # Font family
+        # Font family with custom font support
+        font_layout = QHBoxLayout()
         self.font_combo = QComboBox()
-        self.font_combo.addItems([
-            "Arial", "Arial Black", "Verdana", "Tahoma", "Times New Roman", 
-            "Georgia", "Courier New", "Impact"
-        ])
-        form_layout.addRow("Font:", self.font_combo)
+        font_layout.addWidget(self.font_combo, 1)
+        
+        # Add font upload button
+        self.upload_font_btn = QPushButton("Upload TTF...")
+        self.upload_font_btn.clicked.connect(self.on_upload_font)
+        font_layout.addWidget(self.upload_font_btn)
+        
+        # Add font management button
+        self.manage_fonts_btn = QPushButton("Manage Fonts")
+        self.manage_fonts_btn.clicked.connect(self.on_manage_fonts)
+        font_layout.addWidget(self.manage_fonts_btn)
+        
+        form_layout.addRow("Font:", font_layout)
         
         # Font size
         self.size_spin = QSpinBox()
@@ -112,8 +125,16 @@ class PresetEditorDialog(QDialog):
         )
         help_text.setStyleSheet("color: gray;")
         
+        # Font help text
+        font_help = QLabel(
+            "Note: Custom TTF fonts will be used for rendering. "
+            "Standard fonts will be used in preview."
+        )
+        font_help.setStyleSheet("color: gray;")
+        
         edit_layout.addLayout(form_layout)
         edit_layout.addWidget(help_text)
+        edit_layout.addWidget(font_help)
         
         # Save button
         save_layout = QHBoxLayout()
@@ -143,6 +164,22 @@ class PresetEditorDialog(QDialog):
         self.editing_preset_id = None
         self.update_ui_state()
         
+    def load_fonts(self):
+        """Load fonts into the font combo box"""
+        self.font_combo.clear()
+        
+        # Add standard fonts
+        standard_fonts = self.preset_manager.get_standard_fonts()
+        self.font_combo.addItems(standard_fonts)
+        
+        # Add separator if we have custom fonts
+        if self.preset_manager.custom_fonts:
+            self.font_combo.insertSeparator(len(standard_fonts))
+            
+            # Add custom fonts with indicator
+            for font_name in self.preset_manager.custom_fonts.keys():
+                self.font_combo.addItem(f"📝 {font_name} (Custom)")
+        
     def load_presets(self):
         """Load presets into the list"""
         self.presets_list.clear()
@@ -170,9 +207,22 @@ class PresetEditorDialog(QDialog):
             self.editing_preset_id = preset_id
             self.preset_id_edit.setText(preset_id)
             
-            font_index = self.font_combo.findText(preset.get("font", "Arial"))
-            if font_index >= 0:
-                self.font_combo.setCurrentIndex(font_index)
+            # Handle font selection, check if it's a custom font
+            font_name = preset.get("font", "Arial")
+            is_custom = self.preset_manager.is_custom_font(font_name)
+            
+            if is_custom:
+                # Find the custom font in combo box
+                for i in range(self.font_combo.count()):
+                    item_text = self.font_combo.itemText(i)
+                    if f"📝 {font_name}" in item_text:
+                        self.font_combo.setCurrentIndex(i)
+                        break
+            else:
+                # Standard font
+                font_index = self.font_combo.findText(font_name)
+                if font_index >= 0:
+                    self.font_combo.setCurrentIndex(font_index)
                 
             self.size_spin.setValue(preset.get("size", 36))
             self.color_edit.setText(preset.get("color", "white"))
@@ -218,6 +268,50 @@ class PresetEditorDialog(QDialog):
             self.load_presets()
             self.update_ui_state()
             
+    def on_upload_font(self):
+        """Upload a custom TTF font file"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select TTF Font File", "", "TTF Files (*.ttf);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return
+            
+        # Ask for a custom name
+        font_name, ok = QFileDialog.getSaveFileName(
+            self, "Save Font As", "", "Font Name (no extension needed)"
+        )
+        
+        if not ok or not font_name:
+            font_name = None  # Use default (filename)
+        else:
+            # Strip any extension and path
+            font_name = Path(font_name).stem
+            
+        # Add the font
+        added_name = self.preset_manager.add_custom_font(file_path, font_name)
+        
+        if added_name:
+            QMessageBox.information(
+                self, "Font Added", 
+                f"Custom font '{added_name}' added successfully!"
+            )
+            
+            # Reload fonts
+            self.load_fonts()
+        else:
+            QMessageBox.critical(
+                self, "Error", 
+                "Failed to add custom font. Please check the file is valid."
+            )
+    
+    def on_manage_fonts(self):
+        """Open font management dialog"""
+        dialog = FontManagerDialog(self.preset_manager, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Reload fonts
+            self.load_fonts()
+            
     def on_save_preset(self):
         """Save the current preset"""
         preset_id = self.preset_id_edit.text().strip()
@@ -226,9 +320,18 @@ class PresetEditorDialog(QDialog):
             QMessageBox.warning(self, "Error", "Preset ID cannot be empty")
             return
             
+        # Get font name, handling custom fonts
+        font_text = self.font_combo.currentText()
+        if "📝" in font_text and "(Custom)" in font_text:
+            # Extract custom font name from the display text
+            # Format: "📝 FontName (Custom)"
+            font_name = font_text.split("📝 ")[1].split(" (Custom)")[0]
+        else:
+            font_name = font_text
+            
         # Create preset data from form
         preset_data = {
-            "font": self.font_combo.currentText(),
+            "font": font_name,
             "size": self.size_spin.value(),
             "color": self.color_edit.text(),
             "animation": self.animation_combo.currentText(),
@@ -250,14 +353,8 @@ class PresetEditorDialog(QDialog):
         # Refresh the list
         self.load_presets()
         
-        # Select the saved preset
-        for i in range(self.presets_list.count()):
-            if self.presets_list.item(i).text() == preset_id:
-                self.presets_list.setCurrentRow(i)
-                break
-                
-        # Set as current editing preset
-        self.editing_preset_id = preset_id
+        # Switch to presets tab
+        self.parent().findChild(QTabWidget).setCurrentIndex(0)
         
         QMessageBox.information(self, "Success", f"Preset '{preset_id}' saved successfully")
         
@@ -283,4 +380,144 @@ class PresetEditorDialog(QDialog):
         
         if color.isValid():
             # Use hex format for color
-            self.color_edit.setText(color.name()) 
+            self.color_edit.setText(color.name())
+
+class FontManagerDialog(QDialog):
+    """Dialog for managing custom fonts"""
+    
+    def __init__(self, preset_manager, parent=None):
+        super().__init__(parent)
+        self.preset_manager = preset_manager
+        
+        self.init_ui()
+        self.load_fonts()
+        
+    def init_ui(self):
+        """Initialize the UI layout"""
+        self.setWindowTitle("Custom Font Manager")
+        self.setMinimumWidth(500)
+        self.setMinimumHeight(400)
+        
+        # Main layout
+        main_layout = QVBoxLayout(self)
+        
+        # Font list
+        self.font_list = QListWidget()
+        self.font_list.currentRowChanged.connect(self.on_font_selected)
+        main_layout.addWidget(self.font_list)
+        
+        # Buttons layout
+        buttons_layout = QHBoxLayout()
+        
+        self.add_font_btn = QPushButton("Add Font")
+        self.add_font_btn.clicked.connect(self.on_add_font)
+        buttons_layout.addWidget(self.add_font_btn)
+        
+        self.delete_font_btn = QPushButton("Delete Font")
+        self.delete_font_btn.clicked.connect(self.on_delete_font)
+        buttons_layout.addWidget(self.delete_font_btn)
+        
+        main_layout.addLayout(buttons_layout)
+        
+        # Close button
+        close_layout = QHBoxLayout()
+        close_layout.addStretch()
+        
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.accept)
+        close_layout.addWidget(self.close_btn)
+        
+        main_layout.addLayout(close_layout)
+        
+        # Initial UI state
+        self.update_ui_state()
+        
+    def load_fonts(self):
+        """Load custom fonts into the list"""
+        self.font_list.clear()
+        
+        for font_name, font_info in self.preset_manager.custom_fonts.items():
+            self.font_list.addItem(f"📝 {font_name} ({font_info['file']})")
+            
+    def update_ui_state(self):
+        """Update enabled/disabled state of UI elements"""
+        has_selected = self.font_list.currentRow() >= 0
+        self.delete_font_btn.setEnabled(has_selected)
+        
+    def on_font_selected(self, row):
+        """Handle font selection"""
+        self.update_ui_state()
+        
+    def on_add_font(self):
+        """Add a new custom font"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select TTF Font File", "", "TTF Files (*.ttf);;All Files (*.*)"
+        )
+        
+        if not file_path:
+            return
+            
+        # Ask for a custom name
+        font_name, ok = QFileDialog.getSaveFileName(
+            self, "Save Font As", "", "Font Name (no extension needed)"
+        )
+        
+        if not ok or not font_name:
+            font_name = None  # Use default (filename)
+        else:
+            # Strip any extension and path
+            font_name = Path(font_name).stem
+            
+        # Add the font
+        added_name = self.preset_manager.add_custom_font(file_path, font_name)
+        
+        if added_name:
+            QMessageBox.information(
+                self, "Font Added", 
+                f"Custom font '{added_name}' added successfully!"
+            )
+            
+            # Reload fonts
+            self.load_fonts()
+        else:
+            QMessageBox.critical(
+                self, "Error", 
+                "Failed to add custom font. Please check the file is valid."
+            )
+            
+    def on_delete_font(self):
+        """Delete the selected custom font"""
+        row = self.font_list.currentRow()
+        if row < 0:
+            return
+            
+        # Extract font name from the display text
+        item_text = self.font_list.item(row).text()
+        font_name = item_text.split("📝 ")[1].split(" (")[0]
+        
+        # Confirm deletion
+        result = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Are you sure you want to delete the font '{font_name}'?\n\n"
+            "Note: This may affect presets using this font.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if result == QMessageBox.StandardButton.Yes:
+            success = self.preset_manager.remove_custom_font(font_name)
+            
+            if success:
+                QMessageBox.information(
+                    self, "Font Deleted",
+                    f"Font '{font_name}' deleted successfully."
+                )
+                
+                # Reload fonts
+                self.load_fonts()
+            else:
+                QMessageBox.critical(
+                    self, "Error",
+                    f"Failed to delete font '{font_name}'."
+                )
+                
+            self.update_ui_state() 

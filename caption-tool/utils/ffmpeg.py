@@ -3,6 +3,8 @@ import subprocess
 import json
 import tempfile
 from pathlib import Path
+import time
+import re
 
 class FFmpegHandler:
     def __init__(self):
@@ -76,51 +78,92 @@ class FFmpegHandler:
         subprocess.run(cmd, check=True)
         return output_path
     
-    def generate_drawtext_filter(self, caption, preset, start=None, end=None, fade_duration=0.5):
-        """Generate FFmpeg drawtext filter for a caption with specified preset"""
-        text_esc = caption["text"].replace("'", "'\\\\''")
+    def escape_ffmpeg_text(self, text):
+        """Escape special characters for FFmpeg drawtext filter"""
+        # Replace backslashes first
+        text = text.replace('\\', '\\\\')
+        # Escape quotes
+        text = text.replace('"', '\\"')
+        # Escape colons
+        text = text.replace(':', '\\:')
+        # Escape single quotes
+        text = text.replace("'", "\\'")
+        # Escape asterisks
+        text = text.replace('*', '\\*')
+        return text
+
+    def generate_drawtext_filter(self, caption, preset, preset_manager=None):
+        """Generate FFmpeg drawtext filter for a caption"""
+        # Escape the caption text
+        text = self.escape_ffmpeg_text(caption['text'])
         
-        # Base drawtext filter
-        filter_text = (
-            f"drawtext=text='{text_esc}':"
-            f"fontfile={preset['font']}:"
-            f"fontsize={preset['size']}:"
-            f"fontcolor={preset['color']}:"
-            f"x={preset['x']}:y={preset['y']}"
-        )
+        # Get preset values with defaults
+        font = preset.get('font', 'Arial')
+        size = preset.get('size', 24)
+        color = preset.get('color', 'white')
+        x_pos = preset.get('x', '(w-text_w)/2')
+        y_pos = preset.get('y', 'h-100')
         
-        # Add fade-in and fade-out if start and end times are specified
-        if start is not None and end is not None:
-            fade_in_start = caption["start"]
-            fade_in_end = caption["start"] + fade_duration
-            fade_out_start = caption["end"] - fade_duration
-            fade_out_end = caption["end"]
+        # Handle custom fonts if a preset manager is provided
+        font_path = None
+        if preset_manager and preset_manager.is_custom_font(font):
+            font_path = preset_manager.get_custom_font_path(font)
+            # Ensure path is valid and properly escaped
+            if font_path:
+                # Convert path to raw string and normalize slashes
+                font_path = font_path.replace('\\', '/')
+        
+        # Calculate timing
+        start_time = caption['start']
+        end_time = caption['end']
+        
+        # Generate alpha expression for fade in/out
+        alpha_expr = f"if(lt(t,{start_time+0.5}),(t-{start_time})/0.5,if(lt(t,{end_time-0.5}),1,if(lt(t,{end_time}),1-(t-{end_time-0.5})/0.5,0)))"
+        
+        # Build the drawtext filter
+        filter_parts = [
+            f"drawtext=text='{text}'"
+        ]
+        
+        # Use font file path for custom fonts
+        if font_path:
+            # Properly escape the font path
+            font_path = self.escape_ffmpeg_text(font_path)
+            filter_parts.append(f"fontfile='{font_path}'")
+        else:
+            filter_parts.append(f"font='{font}'")
             
-            if preset["animation"] == "fadeInBottom":
-                filter_text += (
-                    f":alpha='if(lt(t,{fade_in_start}),0,"
-                    f"if(lt(t,{fade_in_end}),(t-{fade_in_start})/{fade_duration},"
-                    f"if(lt(t,{fade_out_start}),1,"
-                    f"if(lt(t,{fade_out_end}),1-(t-{fade_out_start})/{fade_duration},0))))"
-                    f"':y='if(lt(t,{fade_in_end}),h-50-(t-{fade_in_start})/{fade_duration}*50,{preset['y']})'"
-                )
-            elif preset["animation"] == "slideFromTop":
-                filter_text += (
-                    f":alpha='if(lt(t,{fade_in_start}),0,"
-                    f"if(lt(t,{fade_in_end}),(t-{fade_in_start})/{fade_duration},"
-                    f"if(lt(t,{fade_out_start}),1,"
-                    f"if(lt(t,{fade_out_end}),1-(t-{fade_out_start})/{fade_duration},0))))"
-                    f"':y='if(lt(t,{fade_in_end}),50+(t-{fade_in_start})/{fade_duration}*({preset['y']}-50),{preset['y']})'"
-                )
-            else:  # Default fade
-                filter_text += (
-                    f":alpha='if(lt(t,{fade_in_start}),0,"
-                    f"if(lt(t,{fade_in_end}),(t-{fade_in_start})/{fade_duration},"
-                    f"if(lt(t,{fade_out_start}),1,"
-                    f"if(lt(t,{fade_out_end}),1-(t-{fade_out_start})/{fade_duration},0))))'"
-                )
-                
-        return filter_text
+        filter_parts.extend([
+            f"fontsize={size}",
+            f"fontcolor={color}",
+            f"x={x_pos}",
+            f"y={y_pos}",
+            "box=1:boxcolor=black@0.5:boxborderw=5",
+            f"alpha='{alpha_expr}'"
+        ])
+        
+        filter_string = ':'.join(filter_parts)
+        
+        # Validate the filter
+        is_valid, error = self.check_filter_valid(filter_string)
+        if not is_valid:
+            # Try simplified version if validation fails
+            print(f"Warning: Filter validation failed: {error}")
+            return self.create_fallback_filter(text, font, size, color, x_pos, y_pos)
+        
+        return filter_string
+        
+    def create_fallback_filter(self, text, font, size, color, x_pos, y_pos):
+        """Create a simplified fallback filter if the main one fails"""
+        filter_parts = [
+            f"drawtext=text='{text}'",
+            f"font='Arial'",  # Always use Arial as fallback
+            f"fontsize={size}",
+            f"fontcolor={color}",
+            f"x={x_pos}",
+            f"y={y_pos}"
+        ]
+        return ':'.join(filter_parts)
     
     def create_short_preview(self, video_path, caption, preset, output_path=None):
         """Create a short preview with a single caption"""
@@ -132,13 +175,22 @@ class FFmpegHandler:
         duration = end_time - start_time
         
         # Generate drawtext filter
-        drawtext = self.generate_drawtext_filter(caption, preset, start_time, end_time)
+        drawtext = self.generate_drawtext_filter(caption, preset)
+        
+        # Validate and sanitize the filter if needed
+        is_valid, error = self.check_filter_valid(drawtext)
+        if not is_valid:
+            drawtext = self.sanitize_filter(drawtext)
+        
+        # Use filter_complex instead of -vf for consistency and to handle more complex filters
+        filter_complex = f"[0:v]{drawtext}[out]"
         
         cmd = [
             "ffmpeg", "-ss", str(start_time), 
             "-i", video_path, 
             "-t", str(duration),
-            "-vf", drawtext,
+            "-filter_complex", filter_complex,
+            "-map", "[out]", "-map", "0:a",
             "-c:v", "libx264", "-crf", "18", "-preset", "fast",
             "-c:a", "aac", "-b:a", "128k",
             "-y", output_path
@@ -147,89 +199,120 @@ class FFmpegHandler:
         subprocess.run(cmd, check=True)
         return output_path
     
-    def render_final_video(self, video_path, captions, presets, output_path=None, callback=None):
-        """Render the final video with all captions"""
-        if output_path is None:
-            output_path = os.path.splitext(video_path)[0] + "_captioned.mp4"
+    def render_final_video(self, input_path, captions, presets, output_path, progress_callback=None, aspect_ratio=None, scale_mode='contain', preset_manager=None):
+        """Render the final video with captions"""
+        try:
+            # Build filter chain
+            filter_parts = []
+            current_input = "0:v"  # Start with the video input
             
-        # Create complex filter with all captions
-        filter_complex = []
-        
-        for i, caption in enumerate(captions):
-            preset = presets[caption["preset"]]
-            filter_text = self.generate_drawtext_filter(caption, preset, 
-                                                       caption["start"], 
-                                                       caption["end"])
-            filter_complex.append(filter_text)
+            # Add scale filter if aspect ratio is specified
+            if aspect_ratio:
+                if scale_mode == 'contain':
+                    filter_parts.append(f"[{current_input}]scale={aspect_ratio}:force_original_aspect_ratio=decrease,pad={aspect_ratio}:(ow-ih)/2:(oh-iw)/2:black[v0]")
+                else:  # cover
+                    filter_parts.append(f"[{current_input}]scale={aspect_ratio}:force_original_aspect_ratio=increase,crop={aspect_ratio}[v0]")
+                current_input = "v0"
             
-        if not filter_complex:
-            raise ValueError("No captions to render")
+            # Add drawtext filters for each caption
+            for i, caption in enumerate(captions):
+                preset = presets.get(caption['preset'], {})
+                drawtext_filter = self.generate_drawtext_filter(caption, preset, preset_manager)
+                output_label = f"v{i+1}"
+                filter_parts.append(f"[{current_input}]{drawtext_filter}[{output_label}]")
+                current_input = output_label
             
-        filter_arg = ",".join(filter_complex)
-        
-        # Check for hardware acceleration support
-        has_gpu = self.check_gpu_support()
-        
-        # Base command
-        cmd = ["ffmpeg", "-i", video_path, "-vf", filter_arg]
-        
-        # Add video codec options - use hw acceleration if available
-        if has_gpu and self.check_encoder_available("h264_nvenc"):  # NVIDIA
-            cmd.extend(["-c:v", "h264_nvenc", "-preset", "p7", "-cq", "19"])
-        elif has_gpu and self.check_encoder_available("h264_amf"):  # AMD
-            cmd.extend(["-c:v", "h264_amf", "-quality", "quality", "-qp_i", "18", "-qp_p", "20"])
-        elif has_gpu and self.check_encoder_available("h264_qsv"):  # Intel
-            cmd.extend(["-c:v", "h264_qsv", "-preset", "veryslow", "-global_quality", "18"])
-        else:  # Software encoding fallback
-            cmd.extend(["-c:v", "libx264", "-crf", "18", "-preset", "fast"])
-        
-        # Always use AAC audio
-        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
-        
-        # Add output path
-        cmd.extend(["-y", output_path])
-        
-        # Run the process with progress reporting
-        if callback:
-            # We will parse output for progress reporting
+            # Combine all filters
+            filter_complex = ';'.join(filter_parts)
+            
+            # Build FFmpeg command
+            command = [
+                'ffmpeg',
+                '-i', input_path,
+                '-filter_complex', filter_complex,
+                '-map', f'[{current_input}]',  # Use the last output label
+                '-map', '0:a',
+            ]
+            
+            # Use appropriate encoder based on availability
+            if self.check_encoder_available('h264_nvenc'):
+                command.extend([
+                    '-c:v', 'h264_nvenc',
+                    '-preset', 'p7',
+                    '-cq', '19',
+                ])
+            else:
+                # Fallback to libx264 if NVENC not available
+                command.extend([
+                    '-c:v', 'libx264',
+                    '-preset', 'medium',
+                    '-crf', '23',
+                ])
+                
+            # Add audio codec and output file
+            command.extend([
+                '-c:a', 'aac',
+                '-b:a', '192k',
+                '-y',
+                output_path
+            ])
+            
+            # Print the command for debugging
+            command_str = ' '.join(command)
+            print(f"Running FFmpeg command: {command_str}")
+            
+            if progress_callback:
+                progress_callback(-1, f"Starting render with command: {command_str}")
+                
+            # Execute command with progress monitoring
             process = subprocess.Popen(
-                cmd,
+                command,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1
+                stderr=subprocess.PIPE,
+                universal_newlines=True
             )
             
-            # Get video duration for progress calculation
-            duration = self.get_video_info(video_path)["duration"]
+            # Monitor progress
+            duration = self.get_video_info(input_path)["duration"]
+            stderr_output = []
             
-            for line in process.stdout:
-                # Parse FFmpeg progress information
-                if "time=" in line:
-                    try:
-                        # Extract time in format HH:MM:SS.MS
-                        time_str = line.split("time=")[1].split()[0].strip()
-                        # Convert to seconds
-                        h, m, s = map(float, time_str.split(':'))
-                        current_time = h * 3600 + m * 60 + s
-                        # Calculate progress percentage
-                        progress = min(100, int(current_time / duration * 100))
-                        callback(progress, line)
-                    except Exception:
-                        pass
-                else:
-                    # Report other info
-                    callback(-1, line)
+            while True:
+                output = process.stderr.readline()
+                stderr_output.append(output)
+                
+                if output == '' and process.poll() is not None:
+                    break
+                    
+                if output:
+                    if progress_callback:
+                        # Extract time from FFmpeg output
+                        time_match = re.search(r'time=(\d+:\d+:\d+.\d+)', output)
+                        if time_match:
+                            current_time = self.parse_time(time_match.group(1))
+                            progress = min(100, int((current_time / duration) * 100))
+                            progress_callback(progress, output.strip())
             
-            process.wait()
-            
+            # Check for errors
             if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, cmd)
-        else:
-            # Simple subprocess call without progress reporting
-            subprocess.run(cmd, check=True)
+                error_output = '\n'.join(stderr_output)
+                raise Exception(f"FFmpeg error: {error_output}")
             
-        return output_path
+        except Exception as e:
+            error_msg = str(e)
+            print(f"Render error: {error_msg}")
+            
+            # Try to diagnose the issue
+            if "No such file or directory" in error_msg and "fontfile" in error_msg:
+                raise Exception("Font file not found. Please ensure custom fonts are properly installed.")
+            elif "Error initializing filter" in error_msg and "drawtext" in error_msg:
+                raise Exception("Error in drawtext filter. There may be special characters or font issues. Try a different font or text.")
+            else:
+                raise Exception(f"Error rendering video: {error_msg}")
+        
+    def parse_time(self, time_str):
+        """Parse FFmpeg time string to seconds"""
+        h, m, s = time_str.split(':')
+        return float(h) * 3600 + float(m) * 60 + float(s)
         
     def check_gpu_support(self):
         """Check if GPU acceleration is available"""
@@ -273,4 +356,74 @@ class FFmpegHandler:
             )
             return encoder_name.encode() in result.stdout
         except Exception:
+            return False
+            
+    def check_filter_valid(self, filter_string):
+        """Check if a filter string is valid by testing it with FFmpeg"""
+        try:
+            # Create a minimal command to test the filter
+            cmd = [
+                "ffmpeg", 
+                "-f", "lavfi", 
+                "-i", "color=c=black:s=1280x720:d=0.1", 
+                "-vf", filter_string,
+                "-f", "null", "-"
+            ]
+            
+            # Run the command and capture output
+            result = subprocess.run(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+                text=True
+            )
+            
+            # If successful, return True
+            if result.returncode == 0:
+                return True, None
+            else:
+                # Return the error message for debugging
+                return False, result.stderr
+                
+        except Exception as e:
+            return False, str(e)
+            
+    def sanitize_filter(self, filter_text):
+        """Attempt to sanitize a filter string to make it valid"""
+        # Common issues to fix:
+        # 1. Replace fontfile with font
+        filter_text = filter_text.replace("fontfile=", "font=")
+        
+        # 2. Make sure font names have quotes
+        if "font=" in filter_text and not "font='" in filter_text:
+            filter_text = filter_text.replace("font=", "font='")
+            # Add closing quote if needed
+            if not "font='Arial'" in filter_text and not "font='Verdana'" in filter_text:
+                parts = filter_text.split("font='")
+                if len(parts) > 1:
+                    subparts = parts[1].split(":")
+                    if len(subparts) > 1:
+                        filter_text = parts[0] + "font='" + subparts[0] + "':" + ":".join(subparts[1:])
+        
+        return filter_text
+    
+    def check_has_audio(self, video_path):
+        """Check if a video file has an audio stream"""
+        try:
+            cmd = [
+                "ffprobe", "-v", "error", 
+                "-select_streams", "a", 
+                "-show_entries", "stream=codec_type", 
+                "-of", "json", 
+                video_path
+            ]
+            
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, text=True)
+            info = json.loads(result.stdout)
+            
+            # If we have audio streams, there will be entries in the streams array
+            return 'streams' in info and len(info['streams']) > 0
+        except Exception:
+            # If anything goes wrong, assume no audio to be safe
             return False 
