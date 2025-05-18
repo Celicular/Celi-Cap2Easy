@@ -26,7 +26,7 @@ An open source video captioning tool with automatic speech recognition, custom f
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/captioner.git
+git clone https://github.com/celicular/captioner.git
 cd captioner
 ```
 
