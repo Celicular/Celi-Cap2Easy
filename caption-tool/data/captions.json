@@ -1,0 +1,44 @@
+[
+  {
+    "start": 5.0,
+    "end": 10.0,
+    "text": "Haule se, Dheeme Se",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 10.0,
+    "end": 15.0,
+    "text": "Mujhko Baahon mein bhar lo na tum",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 15.0,
+    "end": 20.0,
+    "text": "Narma Si, Saason Mein",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 20.0,
+    "end": 25.0,
+    "text": "Mujhko aahon mein bharlo",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 25.0,
+    "end": 30.0,
+    "text": "Na tum, I",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 30.0,
+    "end": 35.0,
+    "text": "Just need time, Ab tere Bina",
+    "preset": "fadeBottom"
+  },
+  {
+    "start": 35.0,
+    "end": 40.0,
+    "text": "Yaahan meri saansein, Jaise bine nindiyaan ki raatein",
+    "preset": "fadeBottom"
+  }
+]

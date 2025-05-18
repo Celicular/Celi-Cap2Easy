@@ -1,0 +1,26 @@
+{
+  "fadeBottom": {
+    "font": "Arial",
+    "size": 36,
+    "color": "white",
+    "animation": "fadeInBottom",
+    "x": "(w-text_w)/2",
+    "y": "h-100"
+  },
+  "topSlide": {
+    "font": "Verdana",
+    "size": 24,
+    "color": "yellow",
+    "animation": "slideFromTop",
+    "x": "(w-text_w)/2",
+    "y": "50"
+  },
+  "centerBold": {
+    "font": "Arial Black",
+    "size": 42,
+    "color": "#ffffff",
+    "animation": "appear",
+    "x": "(w-text_w)/2",
+    "y": "(h-text_h)/2"
+  }
+} 
